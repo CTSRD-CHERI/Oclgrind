@@ -1,6 +1,9 @@
 Oclgrind
 ========
 
+This fork of Oclgrind adds some basic features that are useful to the
+Capcelerate project.
+
 About
 -----
 This project implements a virtual OpenCL device simulator, including

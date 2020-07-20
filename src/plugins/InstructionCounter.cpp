@@ -23,9 +23,11 @@
 using namespace oclgrind;
 using namespace std;
 
-#define COUNTED_LOAD_BASE  (llvm::Instruction::OtherOpsEnd + 4)
-#define COUNTED_STORE_BASE (COUNTED_LOAD_BASE + 8)
-#define COUNTED_CALL_BASE  (COUNTED_STORE_BASE + 8)
+#define COUNTED_LOAD_BASE      (llvm::Instruction::OtherOpsEnd + 4)
+#define COUNTED_STORE_BASE     (COUNTED_LOAD_BASE + 8)
+#define COUNTED_LOAD_PTR_BASE  (COUNTED_STORE_BASE + 8)
+#define COUNTED_STORE_PTR_BASE (COUNTED_LOAD_PTR_BASE + 8)
+#define COUNTED_CALL_BASE      (COUNTED_STORE_PTR_BASE + 8)
 
 THREAD_LOCAL InstructionCounter::WorkerState
   InstructionCounter::m_state = {NULL};
@@ -56,11 +58,20 @@ string InstructionCounter::getOpcodeName(unsigned opcode) const
     locale defaultLocale("");
     name.imbue(defaultLocale);
 
-    // Get number of bytes
+    // Number of bytes
     size_t bytes = m_memopBytes[opcode-COUNTED_LOAD_BASE];
 
-    // Get name of operation
-    if (opcode >= COUNTED_STORE_BASE)
+    if (opcode >= COUNTED_STORE_PTR_BASE)
+    {
+      opcode -= COUNTED_STORE_PTR_BASE;
+      name << "store-ptr";
+    }
+    else if (opcode >= COUNTED_LOAD_PTR_BASE)
+    {
+      opcode -= COUNTED_LOAD_PTR_BASE;
+      name << "load-ptr";
+    }
+    else if (opcode >= COUNTED_STORE_BASE)
     {
       opcode -= COUNTED_STORE_BASE;
       name << "store";
@@ -96,10 +107,21 @@ void InstructionCounter::instructionExecuted(
     bool load = (opcode == llvm::Instruction::Load);
     const llvm::Type *type = instruction->getOperand(load?0:1)->getType();
     unsigned addrSpace = type->getPointerAddressSpace();
-    opcode = (load ? COUNTED_LOAD_BASE : COUNTED_STORE_BASE) + addrSpace;
+
+    // Count pointer loads and stores separately
+    const llvm::Type *elemType = type->getPointerElementType();
+    if (elemType->isPointerTy()) {
+      // Load/store of pointer
+      opcode = (load ? COUNTED_LOAD_PTR_BASE
+                     : COUNTED_STORE_PTR_BASE) + addrSpace;
+    }
+    else {
+      // Load/store of non-pointer
+      opcode = (load ? COUNTED_LOAD_BASE : COUNTED_STORE_BASE) + addrSpace;
+    }
 
     // Count total number of bytes loaded/stored
-    unsigned bytes = getTypeSize(type->getPointerElementType());
+    unsigned bytes = getTypeSize(elemType);
     (*m_state.memopBytes)[opcode-COUNTED_LOAD_BASE] += bytes;
   }
   else if (opcode == llvm::Instruction::Call)
@@ -135,7 +157,7 @@ void InstructionCounter::kernelBegin(const KernelInvocation *kernelInvocation)
   m_instructionCounts.clear();
 
   m_memopBytes.clear();
-  m_memopBytes.resize(16);
+  m_memopBytes.resize(32);
 
   m_functions.clear();
 }
@@ -199,7 +221,7 @@ void InstructionCounter::workGroupBegin(const WorkGroup *workGroup)
   m_state.instCounts->resize(COUNTED_CALL_BASE);
 
   m_state.memopBytes->clear();
-  m_state.memopBytes->resize(16);
+  m_state.memopBytes->resize(32);
 
   m_state.functions->clear();
 }
